@@ -1,0 +1,54 @@
+To create a stacked bar chart showing the percentage of occurrences for categories that appear in two columns with different counts but the same categories, you can follow the updated approach:
+
+1. **Prepare the Data:** Ensure your data is structured with both columns containing the same categories.
+2. **Calculate the Percentages:** Compute the percentage of occurrences for each category in both columns.
+3. **Create the Stacked Bar Chart:** Use a plotting library like Matplotlib to visualize the data.
+
+Here's how you can do it:
+
+```python
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Sample data
+data = {
+    'Column1': ['A', 'B', 'A', 'C', 'A', 'B', 'C', 'C', 'A', 'B'],
+    'Column2': ['A', 'A', 'B', 'C', 'C', 'C', 'B', 'B', 'A', 'C']
+}
+
+df = pd.DataFrame(data)
+
+# Calculate the counts for each category in both columns
+count_col1 = df['Column1'].value_counts().sort_index()
+count_col2 = df['Column2'].value_counts().sort_index()
+
+# Ensure both Series have the same index
+count_col1 = count_col1.reindex(count_col2.index, fill_value=0)
+count_col2 = count_col2.reindex(count_col1.index, fill_value=0)
+
+# Calculate the percentages
+percentage_col1 = (count_col1 / count_col1.sum()) * 100
+percentage_col2 = (count_col2 / count_col2.sum()) * 100
+
+# Combine the data into a single DataFrame for plotting
+percentage_df = pd.DataFrame({
+    'Column1': percentage_col1,
+    'Column2': percentage_col2
+})
+
+# Plotting
+percentage_df.plot(kind='bar', stacked=True)
+
+# Add labels and title
+plt.xlabel('Categories')
+plt.ylabel('Percentage')
+plt.title('Stacked Bar Chart of Category Percentages')
+plt.legend(title='Columns')
+plt.show()
+```
+
+1. **Data Preparation:** Replace the sample data with your actual data.
+2. **Calculation:** The `value_counts().sort_index()` function ensures that categories are sorted and reindexed properly.
+3. **Plotting:** The `plot(kind='bar', stacked=True)` function creates the stacked bar chart.
+
+This will create a stacked bar chart where each bar represents a category, and the segments of the bar represent the percentages from each column. If you provide the specific data or CSV file, I can help you generate the exact chart you need.
