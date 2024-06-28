@@ -1,0 +1,96 @@
+import torch
+import torch.nn as nn
+from transformers import BertModel, BertTokenizer, BertConfig
+
+class BertForHierarchicalIntentClassification(nn.Module):
+    def __init__(self, model_name, num_l1_labels, num_l2_labels):
+        super(BertForHierarchicalIntentClassification, self).__init__()
+        self.bert = BertModel.from_pretrained(model_name)
+        self.dropout = nn.Dropout(0.3)
+        
+        # L1 intent classifier
+        self.l1_classifier = nn.Linear(self.bert.config.hidden_size, num_l1_labels)
+        
+        # L2 intent classifier
+        self.l2_classifier = nn.Linear(self.bert.config.hidden_size, num_l2_labels)
+        
+    def forward(self, input_ids, attention_mask):
+        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        pooled_output = outputs[1]  # pooled_output is the representation of [CLS] token
+        pooled_output = self.dropout(pooled_output)
+        
+        # L1 and L2 predictions
+        l1_logits = self.l1_classifier(pooled_output)
+        l2_logits = self.l2_classifier(pooled_output)
+        
+        return l1_logits, l2_logits
+
+# Example usage
+model_name = 'bert-base-uncased'
+num_l1_labels = 10  # Number of L1 intents
+num_l2_labels = 20  # Number of L2 intents
+
+# Initialize the model
+model = BertForHierarchicalIntentClassification(model_name, num_l1_labels, num_l2_labels)
+
+# Tokenizer
+tokenizer = BertTokenizer.from_pretrained(model_name)
+
+# Example input
+texts = ["I want to book a flight", "Tell me the weather forecast"]
+inputs = tokenizer(texts, return_tensors="pt", padding=True, truncation=True)
+
+# Forward pass
+input_ids = inputs["input_ids"]
+attention_mask = inputs["attention_mask"]
+
+l1_logits, l2_logits = model(input_ids, attention_mask)
+
+print("L1 logits:", l1_logits)
+print("L2 logits:", l2_logits)
+
+
+
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+
+# Example data (dummy data for illustration purposes)
+input_texts = ["I want to book a flight", "Tell me the weather forecast"]
+l1_labels = torch.tensor([0, 1])  # Example L1 labels
+l2_labels = torch.tensor([3, 7])  # Example L2 labels
+
+# Tokenize input texts
+inputs = tokenizer(input_texts, return_tensors="pt", padding=True, truncation=True)
+input_ids = inputs["input_ids"]
+attention_mask = inputs["attention_mask"]
+
+# Create DataLoader
+dataset = TensorDataset(input_ids, attention_mask, l1_labels, l2_labels)
+dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
+
+# Define loss functions and optimizer
+loss_fn = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=2e-5)
+
+# Training loop
+num_epochs = 3
+for epoch in range(num_epochs):
+    model.train()
+    total_loss = 0
+    for batch in dataloader:
+        input_ids, attention_mask, l1_labels, l2_labels = batch
+        
+        optimizer.zero_grad()
+        l1_logits, l2_logits = model(input_ids, attention_mask)
+        
+        l1_loss = loss_fn(l1_logits, l1_labels)
+        l2_loss = loss_fn(l2_logits, l2_labels)
+        loss = l1_loss + l2_loss
+        
+        loss.backward()
+        optimizer.step()
+        
+        total_loss += loss.item()
+    
+    avg_loss = total_loss / len(dataloader)
+    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")
