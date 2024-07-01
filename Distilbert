@@ -1,0 +1,168 @@
+import pandas as pd
+import torch
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from transformers import DistilBERTTokenizer, DistilBERTForSequenceClassification, Trainer, TrainingArguments
+
+# Example data format
+data = {
+    'utterance': [
+        'What is the weather like today?', 
+        'Book me a flight to New York',
+        'Will it rain tomorrow?',
+        'Find me a hotel in Los Angeles',
+        # Add more utterances here
+    ],
+    'primary_intent': [
+        'weather', 
+        'travel',
+        'weather',
+        'travel',
+        # Add more primary intents here
+    ],
+    'sub_intent': [
+        'current_weather', 
+        'book_flight',
+        'forecast_weather',
+        'find_hotel',
+        # Add more sub intents here
+    ]
+}
+
+df = pd.DataFrame(data)
+
+# Split data into training and validation sets
+train_texts, val_texts, train_primary_labels, val_primary_labels, train_sub_labels, val_sub_labels = train_test_split(
+    df['utterance'], df['primary_intent'], df['sub_intent'], test_size=0.2, random_state=42
+)
+
+# Tokenization
+tokenizer = DistilBERTTokenizer.from_pretrained('distilbert-base-uncased')
+
+train_encodings = tokenizer(list(train_texts), truncation=True, padding=True)
+val_encodings = tokenizer(list(val_texts), truncation=True, padding=True)
+
+# Dataset class
+class IntentDataset(torch.utils.data.Dataset):
+    def __init__(self, encodings, labels):
+        self.encodings = encodings
+        self.labels = labels
+
+    def __getitem__(self, idx):
+        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
+        item['labels'] = torch.tensor(self.labels[idx])
+        return item
+
+    def __len__(self):
+        return len(self.labels)
+
+# Convert labels to numerical format
+primary_label_to_id = {label: idx for idx, label in enumerate(df['primary_intent'].unique())}
+sub_label_to_id = {label: idx for idx, label in enumerate(df['sub_intent'].unique())}
+
+train_primary_labels = [primary_label_to_id[label] for label in train_primary_labels]
+val_primary_labels = [primary_label_to_id[label] for label in val_primary_labels]
+train_sub_labels = [sub_label_to_id[label] for label in train_sub_labels]
+val_sub_labels = [sub_label_to_id[label] for label in val_sub_labels]
+
+train_dataset = IntentDataset(train_encodings, train_primary_labels)
+val_dataset = IntentDataset(val_encodings, val_primary_labels)
+
+# Initialize the model for primary intent classification
+base_model = DistilBERTForSequenceClassification.from_pretrained('distilbert-base-uncased', num_labels=len(primary_label_to_id))
+
+# Training arguments
+training_args = TrainingArguments(
+    output_dir='./results',
+    num_train_epochs=3,
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=16,
+    warmup_steps=500,
+    weight_decay=0.01,
+    logging_dir='./logs',
+)
+
+# Trainer for primary intent classification
+trainer = Trainer(
+    model=base_model,
+    args=training_args,
+    train_dataset=train_dataset,
+    eval_dataset=val_dataset,
+)
+
+# Train the primary intent classifier
+trainer.train()
+
+# Evaluate the primary intent classifier
+predictions = trainer.predict(val_dataset)
+preds = predictions.predictions.argmax(-1)
+accuracy = accuracy_score(val_primary_labels, preds)
+precision, recall, f1, _ = precision_recall_fscore_support(val_primary_labels, preds, average='weighted')
+
+print(f'Primary Intent Classification - Accuracy: {accuracy}')
+print(f'Primary Intent Classification - Precision: {precision}')
+print(f'Primary Intent Classification - Recall: {recall}')
+print(f'Primary Intent Classification - F1 Score: {f1}')
+
+# Fine-tuning for sub-intents
+# Create separate datasets for sub-intents
+sub_datasets = {intent: [] for intent in primary_label_to_id.keys()}
+
+for i, primary_intent in enumerate(train_primary_labels):
+    sub_datasets[primary_intent].append((train_texts.iloc[i], train_sub_labels[i]))
+
+# Fine-tune separate models for each primary intent's sub-intents
+for primary_intent in primary_label_to_id.keys():
+    texts, labels = zip(*sub_datasets[primary_intent])
+    encodings = tokenizer(list(texts), truncation=True, padding=True)
+    dataset = IntentDataset(encodings, list(labels))
+    
+    # Initialize model for sub-intent classification
+    sub_model = DistilBERTForSequenceClassification.from_pretrained('distilbert-base-uncased', num_labels=len(sub_label_to_id))
+    
+    # Training arguments
+    sub_training_args = TrainingArguments(
+        output_dir=f'./results_{primary_intent}',
+        num_train_epochs=3,
+        per_device_train_batch_size=16,
+        per_device_eval_batch_size=16,
+        warmup_steps=500,
+        weight_decay=0.01,
+        logging_dir=f'./logs_{primary_intent}',
+    )
+    
+    # Trainer for sub-intent classification
+    sub_trainer = Trainer(
+        model=sub_model,
+        args=sub_training_args,
+        train_dataset=dataset,
+        eval_dataset=dataset,  # Ideally should be a separate validation set
+    )
+    
+    # Train the sub-intent classifier
+    sub_trainer.train()
+
+# Function to predict primary and sub-intent
+def predict_intent(utterance):
+    # Tokenize the input
+    inputs = tokenizer(utterance, return_tensors='pt')
+    
+    # Predict primary intent
+    outputs = base_model(**inputs)
+    primary_intent = outputs.logits.argmax(-1).item()
+    primary_intent_label = list(primary_label_to_id.keys())[primary_intent]
+    
+    # Load the corresponding sub-intent model
+    sub_model = DistilBERTForSequenceClassification.from_pretrained(f'./results_{primary_intent_label}')
+    
+    # Predict sub-intent
+    sub_outputs = sub_model(**inputs)
+    sub_intent = sub_outputs.logits.argmax(-1).item()
+    sub_intent_label = list(sub_label_to_id.keys())[sub_intent]
+    
+    return primary_intent_label, sub_intent_label
+
+# Example prediction
+utterance = "I need to book a flight"
+primary_intent, sub_intent = predict_intent(utterance)
+print(f'Primary Intent: {primary_intent}, Sub Intent: {sub_intent}')
